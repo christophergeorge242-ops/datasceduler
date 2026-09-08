@@ -1,0 +1,10 @@
+.task-item{flex-wrap:wrap}
+.task-copy{min-width:0;flex:1}
+.task-actions{margin-left:auto;display:flex;align-items:center;gap:4px}
+.task-item .edit-deadline{margin-left:0;font:11px 'DM Sans';color:#4e6c45;padding:4px 5px}
+.task-actions .remove-task{margin-left:0}
+.deadline-editor{flex-basis:100%;display:grid;grid-template-columns:1fr 1fr auto auto;gap:7px;padding:4px 0 0 18px}
+.deadline-editor input{height:34px;margin:0;font-size:12px}
+.deadline-editor button{margin-left:0;border:1px solid var(--line);border-radius:5px;background:white;color:var(--ink);font:11px 'DM Sans';padding:0 8px}
+.deadline-editor button[type=submit]{background:var(--ink);border-color:var(--ink);color:white}
+@media(max-width:500px){.deadline-editor{grid-template-columns:1fr 1fr}.deadline-editor button{height:34px}}

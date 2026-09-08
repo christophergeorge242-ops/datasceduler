@@ -1,0 +1,12 @@
+.unavailable{margin-top:30px;padding-top:22px;border-top:1px solid var(--line)}
+.unavailable-head{display:flex;align-items:baseline;justify-content:space-between}
+.unavailable h4{font:600 16px 'Playfair Display';margin:0}
+.unavailable-head span{font:10px 'DM Mono';color:#919991}
+.busy-form{display:grid;grid-template-columns:1fr 76px 76px 33px;gap:7px;padding-top:14px}
+.busy-form input{margin:0;height:35px;padding:0 8px;font-size:11px}
+.busy-form button{border:0;border-radius:5px;background:#e6ddd0;font-size:17px;color:#61594e;cursor:pointer}
+.busy-item{display:flex;gap:8px;align-items:center;padding:10px 2px;border-bottom:1px solid var(--line);font-size:12px}
+.busy-item:before{content:'';height:7px;width:7px;border-radius:2px;background:#9c8e7b}
+.busy-item time{font:10px 'DM Mono';color:var(--muted);margin-left:auto}
+.busy-item button{border:0;background:transparent;color:#9ba29d;cursor:pointer;font-size:17px}
+@media(max-width:500px){.busy-form{grid-template-columns:1fr 65px 65px 30px}}
