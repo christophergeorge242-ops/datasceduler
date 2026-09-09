@@ -23,7 +23,7 @@
   <main>
     <header><div><p class="eyebrow" id="date-label">MONDAY, SEPTEMBER 8</p></h1></div><div class="header-actions"><button class="outline-btn" id="clear-btn">Clear tasks</button></div></header>
 
-    <section class="intro"><div class="progress-wrap"><div><span id="progress-text">0 of 0 planned</span><span id="progress-pct">0%</span></div><div class="progress"><i id="progress-bar"></i></div></div></section>
+    <section class="intro"><div class="progress-wrap"><div><span id="progress-text">0 of 0 planned</span><span id="progress-pct">0%</span></div><div class="progress"><i id="progress-bar"></i></div><p class="habit-insight" id="habit-insight">Keep completing or skipping tasks to learn your best working patterns.</p></div></section>
 
     <section class="workspace">
       <div class="task-panel" id="tasks"><div class="section-title"><h3>Tasks</h3><span>01</span></div>
@@ -32,6 +32,7 @@
           <div class="form-grid"><label>DEADLINE<input id="deadline" type="date" required /></label><label>DUE TIME<input id="due-time" type="time" value="23:59" required /></label></div>
           <div class="form-grid"><label>EST. TIME<select id="duration"><option value="30">30 min</option><option value="45">45 min</option><option value="60" selected>1 hour</option><option value="90">1.5 hours</option><option value="120">2 hours</option></select></label></div>
           <div class="form-grid"><label>PRIORITY<select id="priority"><option>High</option><option selected>Medium</option><option>Low</option></select></label><label>BEST TIME<select id="preferredTime"><option>Morning</option><option>Afternoon</option><option>Evening</option><option selected>Anytime</option></select></label></div>
+          <div class="form-grid"><label>DIFFICULTY<select id="difficulty"><option>Easy</option><option selected>Medium</option><option>Hard</option></select></label></div>
           <button class="add-btn" type="submit"><span>＋</span> Add to my day</button>
         </form>
         <div class="task-list" id="task-list"></div>

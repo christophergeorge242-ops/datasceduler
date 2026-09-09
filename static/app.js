@@ -24,6 +24,9 @@ function updateHeader() {
   $('#progress-pct').textContent = tasks.length ? '100%' : '0%';
   $('#progress-bar').style.width = tasks.length ? '100%' : '0%';
 }
+function updateInsight(text) {
+  if (text) $('#habit-insight').textContent = text;
+}
 function openDeadlineEditor(task, node) {
   if (node.querySelector('.deadline-editor')) return;
   const editor = document.createElement('form');
@@ -90,16 +93,26 @@ async function generate() {
   if (!tasks.length) { empty.hidden = false; timeline.innerHTML = ''; return; }
   empty.hidden = true;
   const response = await fetch('/api/schedule', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tasks, busyBlocks, ...localScheduleContext()})});
-  const {schedule} = await response.json();
+  const result = await response.json();
+  const {schedule} = result;
+  updateInsight(result.habitInsight);
   timeline.innerHTML = '';
   schedule.forEach(task => {
     if (task.unscheduled) return;
     const row = document.createElement('div'); row.className = 'time-row';
-    row.innerHTML = `<div class="time-label">${task.start}</div><article class="event ${task.priority.toLowerCase()}"><div><strong>${task.name}</strong><small>${task.duration} min · Best in the ${task.preferredTime.toLowerCase()}</small></div><div class="event-meta"><strong>${task.end}</strong><span class="deadline">Due ${formatDate(task.deadline)} at ${displayTime(task.dueTime || '23:59')}</span></div></article>`;
+    row.innerHTML = `<div class="time-label">${task.start}</div><article class="event ${task.priority.toLowerCase()}"><div><strong>${task.name}</strong><small>${task.duration} min · ${task.predictedWindow} · ${Math.round(task.predictedCompletion * 100)}% likely</small></div><div class="event-meta"><strong>${task.end}</strong><span class="deadline">Due ${formatDate(task.deadline)} at ${displayTime(task.dueTime || '23:59')}</span><div class="feedback"><button type="button" data-result="true">Done</button><button type="button" data-result="false">Skip</button></div></div></article>`;
+    row.querySelectorAll('[data-result]').forEach(button => {
+      button.onclick = async () => {
+        const feedback = await fetch('/api/feedback', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({task, completed:button.dataset.result === 'true', window:task.predictedWindow})});
+        const result = await feedback.json();
+        updateInsight(result.habitInsight);
+        generate();
+      };
+    });
     timeline.appendChild(row);
   });
 }
-form.addEventListener('submit', e => { e.preventDefault(); tasks.push({name:$('#task-name').value.trim(), deadline:deadline.value, dueTime:$('#due-time').value, duration:+$('#duration').value, priority:$('#priority').value, preferredTime:$('#preferredTime').value}); form.reset(); deadline.value = localScheduleContext().currentDate; $('#due-time').value = '23:59'; renderTasks(); generate(); saveState(); });
+form.addEventListener('submit', e => { e.preventDefault(); tasks.push({name:$('#task-name').value.trim(), deadline:deadline.value, dueTime:$('#due-time').value, duration:+$('#duration').value, priority:$('#priority').value, preferredTime:$('#preferredTime').value, difficulty:$('#difficulty').value}); form.reset(); deadline.value = localScheduleContext().currentDate; $('#due-time').value = '23:59'; renderTasks(); generate(); saveState(); });
 $('#busy-form').addEventListener('submit', e => { e.preventDefault(); const title = $('#busy-title').value.trim(); const start = $('#busy-start').value; const end = $('#busy-end').value; if (title && start < end) { busyBlocks.push({title, start, end}); e.target.reset(); $('#busy-start').value = '10:00'; $('#busy-end').value = '11:00'; renderBusyBlocks(); generate(); saveState(); } });
 $('#generate-btn').onclick = generate;
 $('#clear-btn').onclick = () => { tasks.length = 0; busyBlocks.length = 0; renderTasks(); renderBusyBlocks(); generate(); saveState(); };
@@ -108,6 +121,7 @@ async function restoreState() {
     const response = await fetch('/api/state');
     const saved = await response.json();
     tasks.push(...(saved.tasks || []));
+    updateInsight(saved.habitInsight);
     busyBlocks.push(...(saved.busyBlocks || []));
   } catch (error) { console.warn('Saved planner data could not be loaded.', error); }
   renderTasks(); renderBusyBlocks(); generate();

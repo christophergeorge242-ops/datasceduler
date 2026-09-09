@@ -2,6 +2,7 @@ from datetime import datetime
 from pathlib import Path
 import json
 import sqlite3
+import math
 from flask import Flask, jsonify, render_template, request
 
 app = Flask(__name__)
@@ -18,7 +19,10 @@ TIME_WINDOWS = {
 def database():
     connection = sqlite3.connect(DATABASE)
     connection.row_factory = sqlite3.Row
-    connection.execute("CREATE TABLE IF NOT EXISTS planner_state (id INTEGER PRIMARY KEY CHECK (id = 1), tasks TEXT NOT NULL DEFAULT '[]', busy_blocks TEXT NOT NULL DEFAULT '[]')")
+    connection.execute("CREATE TABLE IF NOT EXISTS planner_state (id INTEGER PRIMARY KEY CHECK (id = 1), tasks TEXT NOT NULL DEFAULT '[]', busy_blocks TEXT NOT NULL DEFAULT '[]', history TEXT NOT NULL DEFAULT '[]')")
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(planner_state)")}
+    if "history" not in columns:
+        connection.execute("ALTER TABLE planner_state ADD COLUMN history TEXT NOT NULL DEFAULT '[]'")
     connection.execute("INSERT OR IGNORE INTO planner_state (id) VALUES (1)")
     connection.commit()
     return connection
@@ -30,7 +34,69 @@ def time_label(hour, minute=0):
     return f"{display}:{minute:02d} {suffix}"
 
 
-def schedule_tasks(tasks, busy_blocks=None, current_date=None, current_minutes=None):
+class HabitModel:
+    """Small online logistic model with no extra ML dependency."""
+
+    WINDOWS = ("Morning", "Afternoon", "Evening", "Anytime")
+
+    def __init__(self, history):
+        self.weights = [0.0] * 8
+        self.samples = len(history)
+        self._fit(history)
+
+    @staticmethod
+    def _features(task, window):
+        difficulty = {"Easy": 0.0, "Medium": 0.5, "Hard": 1.0}.get(task.get("difficulty"), 0.5)
+        priority = {"Low": 0.0, "Medium": 0.5, "High": 1.0}.get(task.get("priority"), 0.5)
+        duration = min(max(float(task.get("duration", 30)), 15.0), 180.0) / 180.0
+        return [
+            1.0,
+            float(window == "Morning"),
+            float(window == "Afternoon"),
+            float(window == "Evening"),
+            difficulty,
+            priority,
+            duration,
+            difficulty * float(window == "Morning"),
+        ]
+
+    def _fit(self, history):
+        if not history:
+            return
+        for _ in range(180):
+            gradients = [0.0] * len(self.weights)
+            for record in history:
+                features = self._features(record, record.get("window", "Anytime"))
+                probability = self._probability(features)
+                error = float(bool(record.get("completed"))) - probability
+                for index, value in enumerate(features):
+                    gradients[index] += error * value
+            for index, gradient in enumerate(gradients):
+                self.weights[index] += 0.08 * (gradient / len(history) - 0.02 * self.weights[index])
+
+    def _probability(self, features):
+        score = sum(weight * value for weight, value in zip(self.weights, features))
+        score = max(-30.0, min(30.0, score))
+        return 1.0 / (1.0 + math.exp(-score))
+
+    def predict(self, task, window):
+        return self._probability(self._features(task, window))
+
+    def best_window(self, task):
+        preferred = task.get("preferredTime", "Anytime")
+        if preferred != "Anytime":
+            return preferred, self.predict(task, preferred)
+        return max(((window, self.predict(task, window)) for window in self.WINDOWS[:-1]), key=lambda item: item[1])
+
+    def insight(self):
+        if self.samples < 3:
+            return "Keep completing or skipping tasks to learn your best working patterns."
+        difficult = {window: self.predict({"difficulty": "Hard", "priority": "Medium", "duration": 60}, window) for window in self.WINDOWS[:-1]}
+        best_window, best_score = max(difficult.items(), key=lambda item: item[1])
+        return f"You are most likely to complete difficult tasks in the {best_window.lower()} ({round(best_score * 100)}% predicted)."
+
+
+def schedule_tasks(tasks, busy_blocks=None, current_date=None, current_minutes=None, history=None):
     """Plan from the user's local current time, respecting same-day due times."""
     try:
         today = datetime.strptime(current_date, "%Y-%m-%d").date()
@@ -59,7 +125,10 @@ def schedule_tasks(tasks, busy_blocks=None, current_date=None, current_minutes=N
         parsed.append({**task, "deadline_date": deadline, "duration": duration, "due_minutes": due_minutes})
 
     priority_value = {"High": 3, "Medium": 2, "Low": 1}
-    parsed.sort(key=lambda t: (t["deadline_date"], -priority_value.get(t.get("priority"), 2)))
+    model = HabitModel(history or [])
+    for task in parsed:
+        task["predictedWindow"], task["predictedCompletion"] = model.best_window(task)
+    parsed.sort(key=lambda t: (t["deadline_date"], -priority_value.get(t.get("priority"), 2), -t["predictedCompletion"]))
 
     busy = []
     for block in busy_blocks or []:
@@ -88,7 +157,8 @@ def schedule_tasks(tasks, busy_blocks=None, current_date=None, current_minutes=N
         if task["deadline_date"] < today:
             scheduled.append({**task, "unscheduled": True, "reason": "Deadline has passed"})
             continue
-        start_hour, end_hour = TIME_WINDOWS.get(task.get("preferredTime"), TIME_WINDOWS["Anytime"])
+        selected_window = task["predictedWindow"]
+        start_hour, end_hour = TIME_WINDOWS.get(selected_window, TIME_WINDOWS["Anytime"])
         # On the due date, the selected due time is a hard finish-by limit.
         latest_end = min(22 * 60, task["due_minutes"]) if task["deadline_date"] == today else 22 * 60
         start = first_open_slot(max(cursor, start_hour * 60), min(end_hour * 60, latest_end), task["duration"])
@@ -105,6 +175,9 @@ def schedule_tasks(tasks, busy_blocks=None, current_date=None, current_minutes=N
             "startMinutes": start,
             "endMinutes": end,
             "isToday": task["deadline_date"] == today,
+            "predictedWindow": selected_window,
+            "predictedCompletion": round(task["predictedCompletion"], 3),
+            "habitReason": "Based on your completion history" if model.samples else "Learning from your task history",
         })
         cursor = end + 10  
     return scheduled
@@ -121,14 +194,18 @@ def create_schedule():
     tasks = payload.get("tasks", [])
     if not isinstance(tasks, list):
         return jsonify({"error": "Tasks must be a list."}), 400
-    return jsonify({"schedule": schedule_tasks(tasks, payload.get("busyBlocks", []), payload.get("currentDate"), payload.get("currentMinutes"))})
+    with database() as connection:
+        state = connection.execute("SELECT history FROM planner_state WHERE id = 1").fetchone()
+    history = json.loads(state["history"])
+    return jsonify({"schedule": schedule_tasks(tasks, payload.get("busyBlocks", []), payload.get("currentDate"), payload.get("currentMinutes"), history), "habitInsight": HabitModel(history).insight()})
 
 
 @app.get("/api/state")
 def get_state():
     with database() as connection:
-        state = connection.execute("SELECT tasks, busy_blocks FROM planner_state WHERE id = 1").fetchone()
-    return jsonify({"tasks": json.loads(state["tasks"]), "busyBlocks": json.loads(state["busy_blocks"])})
+        state = connection.execute("SELECT tasks, busy_blocks, history FROM planner_state WHERE id = 1").fetchone()
+    history = json.loads(state["history"])
+    return jsonify({"tasks": json.loads(state["tasks"]), "busyBlocks": json.loads(state["busy_blocks"]), "habitInsight": HabitModel(history).insight()})
 
 
 @app.put("/api/state")
@@ -141,6 +218,24 @@ def save_state():
         connection.execute("UPDATE planner_state SET tasks = ?, busy_blocks = ? WHERE id = 1", (json.dumps(tasks), json.dumps(busy_blocks)))
         connection.commit()
     return jsonify({"saved": True})
+
+
+@app.post("/api/feedback")
+def record_feedback():
+    payload = request.get_json(silent=True) or {}
+    task = payload.get("task")
+    if not isinstance(task, dict) or not isinstance(payload.get("completed"), bool):
+        return jsonify({"error": "A task and boolean completion value are required."}), 400
+    record = {key: task.get(key) for key in ("name", "duration", "priority", "difficulty", "preferredTime")}
+    record["window"] = payload.get("window") or task.get("predictedWindow") or task.get("preferredTime", "Anytime")
+    record["completed"] = payload["completed"]
+    with database() as connection:
+        state = connection.execute("SELECT history FROM planner_state WHERE id = 1").fetchone()
+        history = json.loads(state["history"])
+        history.append(record)
+        connection.execute("UPDATE planner_state SET history = ? WHERE id = 1", (json.dumps(history),))
+        connection.commit()
+    return jsonify({"saved": True, "habitInsight": HabitModel(history).insight()})
 
 
 if __name__ == "__main__":
